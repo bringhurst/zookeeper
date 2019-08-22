@@ -1285,6 +1285,14 @@ encryption/authentication/authorization performed by the service.
     **New in 3.5.5:**
     TBD
 
+* *ssl.includeSanForAcl* :
+    Include client certificate subjectAltNames (filtered by **ssl.sanForAclFilter**) in the list of identifiers which may be used for x509 scheme ACLs.
+    Default: false
+
+* *ssl.sanForAclFilter* :
+    Specifies the type filter for subjectAltName entries in client certificates when **ssl.aclIncludeSanForAcl** is enabled. This may be set to any subjectAltName IA5String type as defined in X.509 ASN.1 OID 2.5.29.17: rfc822Name (1), dNSName (2), or uniformResourceName (6). The default is dNSName (2).
+    Default: 2
+
 * *client.portUnification*:
     (Java system properties: **zookeeper.client.portUnification**)
     Specifies that the client port should accept SSL connections

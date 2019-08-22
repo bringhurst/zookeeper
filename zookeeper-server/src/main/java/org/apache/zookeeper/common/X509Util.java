@@ -158,6 +158,8 @@ public abstract class X509Util implements Closeable, AutoCloseable {
     private String sslOcspEnabledProperty = getConfigPrefix() + "ocsp";
     private String sslClientAuthProperty = getConfigPrefix() + "clientAuth";
     private String sslHandshakeDetectionTimeoutMillisProperty = getConfigPrefix() + "handshakeDetectionTimeoutMillis";
+    private String sslIncludeSanForAclEnabledProperty = getConfigPrefix() + "includeSanForAcl";
+    private String sslSanForAclFilterProperty = getConfigPrefix() + "sanForAclFilter";
 
     private ZKConfig zkConfig;
     private AtomicReference<SSLContextAndOptions> defaultSSLContextAndOptions = new AtomicReference<>(null);
@@ -236,6 +238,14 @@ public abstract class X509Util implements Closeable, AutoCloseable {
 
     public String getSslClientAuthProperty() {
         return sslClientAuthProperty;
+    }
+
+    public String getSslIncludeSanForAclEnabledProperty() {
+        return sslIncludeSanForAclEnabledProperty;
+    }
+
+    public String getSslSanForAclFilterProperty() {
+        return sslSanForAclFilterProperty;
     }
 
     /**

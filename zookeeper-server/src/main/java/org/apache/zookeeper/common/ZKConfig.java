@@ -128,6 +128,8 @@ public class ZKConfig {
         properties.put(x509Util.getSslOcspEnabledProperty(), System.getProperty(x509Util.getSslOcspEnabledProperty()));
         properties.put(x509Util.getSslClientAuthProperty(), System.getProperty(x509Util.getSslClientAuthProperty()));
         properties.put(x509Util.getSslHandshakeDetectionTimeoutMillisProperty(), System.getProperty(x509Util.getSslHandshakeDetectionTimeoutMillisProperty()));
+        properties.put(x509Util.getSslIncludeSanForAclEnabledProperty(), System.getProperty(x509Util.getSslIncludeSanForAclEnabledProperty()));
+        properties.put(x509Util.getSslSanForAclFilterProperty(), System.getProperty(x509Util.getSslSanForAclFilterProperty()));
     }
 
     /**

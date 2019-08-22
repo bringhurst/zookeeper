@@ -19,6 +19,8 @@
 package org.apache.zookeeper.test;
 
 import static org.junit.Assert.assertEquals;
+
+import java.io.IOException;
 import java.math.BigInteger;
 import java.net.Socket;
 import java.security.InvalidKeyException;
@@ -32,9 +34,15 @@ import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateExpiredException;
 import java.security.cert.CertificateNotYetValidException;
+import java.security.cert.CertificateParsingException;
 import java.security.cert.X509Certificate;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Date;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Set;
 import javax.net.ssl.X509KeyManager;
 import javax.net.ssl.X509TrustManager;
@@ -52,8 +60,15 @@ public class X509AuthTest extends ZKTestCase {
     private static TestCertificate superCert;
     private static TestCertificate unknownCert;
 
+    private static TestCertificate sanServerCert;
+    private static TestCertificate sanClientCert;
+    private static TestCertificate sanClientUnknownCert;
+
+    private static final int SAN_DNS_NAME_TYPE = 2;
+    private static final String SAN_DNS_NAME_VALUE = "mock:/san/entry.dNSName1";
+
     @Before
-    public void setUp() {
+    public void setUp() throws IOException {
         System.setProperty("zookeeper.X509AuthenticationProvider.superUser", "CN=SUPER");
         System.setProperty("zookeeper.ssl.keyManager", "org.apache.zookeeper.test.X509AuthTest.TestKeyManager");
         System.setProperty("zookeeper.ssl.trustManager", "org.apache.zookeeper.test.X509AuthTest.TestTrustManager");
@@ -61,6 +76,15 @@ public class X509AuthTest extends ZKTestCase {
         clientCert = new TestCertificate("CLIENT");
         superCert = new TestCertificate("SUPER");
         unknownCert = new TestCertificate("UNKNOWN");
+
+        sanServerCert = new TestCertificate("SAN_SERVER");
+        sanServerCert.addSubjectAlternativeName(SAN_DNS_NAME_TYPE, SAN_DNS_NAME_VALUE);
+
+        sanClientCert = new TestCertificate("SAN_CLIENT");
+        sanClientCert.addSubjectAlternativeName(SAN_DNS_NAME_TYPE, SAN_DNS_NAME_VALUE);
+
+        sanClientUnknownCert = new TestCertificate("SAN_CLIENT_UNKNOWN");
+        sanClientCert.addSubjectAlternativeName(SAN_DNS_NAME_TYPE, "unknown");
     }
 
     @Test
@@ -69,6 +93,22 @@ public class X509AuthTest extends ZKTestCase {
         MockServerCnxn cnxn = new MockServerCnxn();
         cnxn.clientChain = new X509Certificate[]{clientCert};
         assertEquals(KeeperException.Code.OK, provider.handleAuthentication(cnxn, null));
+    }
+
+    @Test
+    public void testTrustedSanAuth() {
+        X509AuthenticationProvider provider = createProvider(sanServerCert);
+        MockServerCnxn cnxn = new MockServerCnxn();
+        cnxn.clientChain = new X509Certificate[]{sanClientCert};
+        assertEquals(KeeperException.Code.OK, provider.handleAuthentication(cnxn, null));
+    }
+
+    @Test
+    public void testUntrustedSanAuth() {
+        X509AuthenticationProvider provider = createProvider(sanServerCert);
+        MockServerCnxn cnxn = new MockServerCnxn();
+        cnxn.clientChain = new X509Certificate[]{sanClientUnknownCert};
+        assertEquals(KeeperException.Code.AUTHFAILED, provider.handleAuthentication(cnxn, null));
     }
 
     @Test
@@ -111,11 +151,24 @@ public class X509AuthTest extends ZKTestCase {
         private byte[] encoded;
         private X500Principal principal;
         private PublicKey publicKey;
+        private Collection<List<?>> subjectAlternativeNames;
+
         public TestCertificate(String name) {
             encoded = name.getBytes();
             principal = new X500Principal("CN=" + name);
             publicKey = new TestPublicKey();
         }
+
+        public void addSubjectAlternativeName(int type, String name) throws IOException {
+            if(subjectAlternativeNames == null) {
+                subjectAlternativeNames = new HashSet<List<?>>();
+            }
+            List<Object> entityList = new ArrayList<Object>();
+            entityList.add(Integer.valueOf(type));
+            entityList.add(name);
+            subjectAlternativeNames.add(entityList);
+        }
+
         @Override
         public boolean hasUnsupportedCriticalExtension() {
             return false;

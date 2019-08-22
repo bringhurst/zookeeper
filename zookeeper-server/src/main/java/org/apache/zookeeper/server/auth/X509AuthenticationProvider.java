@@ -20,9 +20,14 @@ package org.apache.zookeeper.server.auth;
 
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
 import javax.net.ssl.X509KeyManager;
 import javax.net.ssl.X509TrustManager;
 import javax.security.auth.x500.X500Principal;
+import java.security.cert.CertificateParsingException;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.common.ClientX509Util;
 import org.apache.zookeeper.common.X509Exception;
@@ -54,6 +59,9 @@ public class X509AuthenticationProvider implements AuthenticationProvider {
     private static final Logger LOG = LoggerFactory.getLogger(X509AuthenticationProvider.class);
     private final X509TrustManager trustManager;
     private final X509KeyManager keyManager;
+
+    private boolean sslIncludeSanForAclEnabled;
+    private int sslSanForAclFilter;
 
     /**
      * Initialize the X509AuthenticationProvider with a JKS KeyStore and JKS
@@ -108,6 +116,18 @@ public class X509AuthenticationProvider implements AuthenticationProvider {
             }
             this.keyManager = km;
             this.trustManager = tm;
+
+            this.sslIncludeSanForAclEnabled = config.getBoolean(x509Util.getSslIncludeSanForAclEnabledProperty());
+
+            // Default to use subjectAltName dNSName (ASN.1 OID 2.5.29.17).
+            this.sslSanForAclFilter = Integer.parseInt(config.getProperty(x509Util.getSslSanForAclFilterProperty(), "2"));
+            if(this.sslSanForAclFilter != 1 &&
+               this.sslSanForAclFilter != 2 &&
+               this.sslSanForAclFilter != 6) {
+                LOG.error("SAN filter type {} was specified, but supported SAN types are: rfc822Name (1), dNSName (2), and uniformResourceIdentifier (6)",
+                    this.sslSanForAclFilter);
+            }
+
         }
     }
 
@@ -164,6 +184,17 @@ public class X509AuthenticationProvider implements AuthenticationProvider {
         cnxn.addAuthInfo(authInfo);
 
         LOG.info("Authenticated Id '{}' for Scheme '{}'", authInfo.getId(), authInfo.getScheme());
+
+        if (this.sslIncludeSanForAclEnabled) {
+            List<String> altClientIds = getAlternativeClientIds(clientCert);
+            for (int i = 0; i < altClientIds.size(); i++) {
+                Id altAuthInfo = new Id(getScheme(), altClientIds.get(i));
+                cnxn.addAuthInfo(altAuthInfo);
+
+                LOG.info("Authenticated Alternative Id '{}' for Scheme '{}'", altAuthInfo.getId(), altAuthInfo.getScheme());
+            }
+        }
+
         return KeeperException.Code.OK;
     }
 
@@ -179,6 +210,49 @@ public class X509AuthenticationProvider implements AuthenticationProvider {
      */
     protected String getClientId(X509Certificate clientCert) {
         return clientCert.getSubjectX500Principal().getName();
+    }
+
+    /**
+     * Determine alternate identifier strings to be used for authorization
+     * purposes. Associate these client identifiers with a ServerCnxn that has
+     * been authenticated over SSL, and any ACLs that refer to the
+     * authenticated client.
+     *
+     * @param clientCert Authenticated X509Certificate associated with the
+     *                   remote host.
+     * @return a list of identifier strings to be associated with the client.
+     */
+    protected List<String> getAlternativeClientIds(X509Certificate clientCert) {
+        List<String> altClientIds = new ArrayList<String>();
+        try {
+            Collection<?> subjectAltNames = clientCert.getSubjectAlternativeNames();
+            if (subjectAltNames == null) {
+                return Collections.emptyList();
+            }
+
+            for (Object subjectAltName : subjectAltNames) {
+                List<?> entry = (List<?>) subjectAltName;
+                if (entry == null || entry.size() < 2) {
+                    continue;
+                }
+
+                Integer altNameType = (Integer) entry.get(0);
+                if (altNameType == null) {
+                    continue;
+                }
+
+                if (altNameType == this.sslSanForAclFilter) {
+                    String altName = (String) entry.get(1);
+                    if (altName != null) {
+                        altClientIds.add(altName);
+                    }
+                }
+            }
+
+            return altClientIds;
+        } catch (CertificateParsingException cpe) {
+            return Collections.emptyList();
+        }
     }
 
     @Override
