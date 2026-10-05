@@ -1128,7 +1128,7 @@ the integrity of IP-based access controls.
 
 - _ssl.authProvider_ :
   (Java system property: **zookeeper.ssl.authProvider**)
-  Specifies a subclass of **org.apache.zookeeper.auth.X509AuthenticationProvider**
+  Specifies a subclass of **org.apache.zookeeper.server.auth.X509AuthenticationProvider**
   to use for secure client authentication. This is useful in
   certificate key infrastructures that do not use JKS. It may be
   necessary to extend **javax.net.ssl.X509KeyManager** and **javax.net.ssl.X509TrustManager**
@@ -1139,6 +1139,50 @@ the integrity of IP-based access controls.
   implementation. This will load the provider into the ProviderRegistry.
   Then set this property **zookeeper.ssl.authProvider=[scheme]** and that provider
   will be used for secure authentication.
+
+  A custom X.509 provider can override `getClientIds(X509Certificate)` to return multiple
+  identities, such as a URI subject alternative name and an existing identity during a
+  migration. ZooKeeper invokes this hook only after validating the certificate chain,
+  for both secure client connections and HTTP authentication. The default returns only
+  `getClientId(certificate)`, which preserves subject-DN authentication and existing overrides.
+
+  For example, inside a custom provider, an explicit migration policy could retain the old
+  identity and add an approved URI identity:
+
+  ```java
+  @Override
+  protected Collection<String> getClientIds(X509Certificate certificate)
+          throws CertificateException {
+      Collection<String> identities = new ArrayList<>(super.getClientIds(certificate));
+      // Implement this according to the PKI's identity and trust-domain policy.
+      String uri = validatedUriIdentity(certificate);
+      if (uri != null) {
+          identities.add("uri:" + uri);
+      }
+      return identities;
+  }
+  ```
+
+  `validatedUriIdentity` above is application-specific, not a ZooKeeper API. It should return
+  null only when there is no applicable URI, and throw `CertificateException` when the
+  certificate contains an unacceptable or ambiguous identity. Preserve the complete URI,
+  including its trust domain, rather than extracting an unqualified application name.
+  Use distinguishable identity formats, and override `isValid(String)` to validate any
+  additional formats accepted in ACLs (for example, `uri:` followed by a validated absolute URI).
+  `matches(String, String)` remains an exact comparison unless the custom provider overrides it.
+
+  Returning an empty collection or throwing `CertificateException` rejects authentication;
+  ZooKeeper does not silently fall back to the DN. Null collections or null/empty identity
+  strings are also rejected. Duplicate identities are ignored. No identities from a rejected
+  mapping are registered on the connection.
+
+  Every returned identity is independently eligible for ACL matching, including the configured
+  X.509 superuser identity. Only return identities that the certificate and issuance policy
+  authorize. Retain a DN only if the issuing PKI still treats it as an authorization identity;
+  URI-based PKIs may use non-unique or non-identifying subjects. Returning multiple identities
+  can support old and new ACLs during migration, but does not infer aliases absent from the
+  certificate or migrate existing ACLs. Once migration is complete, the provider can stop
+  returning the legacy identity.
 
 - _zookeeper.ensembleAuthName_ :
   (Java system property only: **zookeeper.ensembleAuthName**)

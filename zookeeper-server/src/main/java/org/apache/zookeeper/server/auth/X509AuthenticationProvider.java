@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import javax.net.ssl.X509KeyManager;
 import javax.net.ssl.X509TrustManager;
@@ -120,8 +121,8 @@ public class X509AuthenticationProvider implements AuthenticationProvider {
 
     @Override
     public KeeperException.Code handleAuthentication(ServerCnxn cnxn, byte[] authData) {
-        List<Certificate> certs = Arrays.asList(cnxn.getClientCertificateChain());
-        X509Certificate[] certChain = certs.toArray(new X509Certificate[certs.size()]);
+        Certificate[] certs = cnxn.getClientCertificateChain();
+        X509Certificate[] certChain = certs == null ? null : Arrays.copyOf(certs, certs.length, X509Certificate[].class);
 
         final Collection<Id> ids = handleAuthentication(certChain);
         if (ids.isEmpty()) {
@@ -154,6 +155,30 @@ public class X509AuthenticationProvider implements AuthenticationProvider {
      */
     protected String getClientId(X509Certificate clientCert) {
         return clientCert.getSubjectX500Principal().getName();
+    }
+
+    /**
+     * Determine the identities to use for authorization after the client certificate chain has
+     * passed trust validation. This hook is shared by client connections and HTTP authentication.
+     *
+     * <p>The default delegates to {@link #getClientId(X509Certificate)}, preserving existing
+     * subclasses and subject-DN authentication. Subclasses may instead return, for example,
+     * validated URI subject alternative names, optionally alongside an existing identity during
+     * migration. Every returned identity grants access independently; subclasses must only return
+     * identities authorized by their certificate issuance policy and should override
+     * {@link #isValid(String)} if they support additional ACL identity formats.
+     *
+     * <p>Identities use this provider's scheme and matching rules, including the configured X.509
+     * superuser identity. Duplicates are ignored, preserving iteration order. An empty collection
+     * or a {@link CertificateException} rejects authentication without falling back to another
+     * identity. A null collection or a null or empty identity also rejects authentication.
+     *
+     * @param clientCert the authenticated leaf certificate
+     * @return identities to associate with the client
+     * @throws CertificateException if the certificate has no acceptable identity
+     */
+    protected Collection<String> getClientIds(X509Certificate clientCert) throws CertificateException {
+        return Collections.singletonList(getClientId(clientCert));
     }
 
     @Override
@@ -229,15 +254,29 @@ public class X509AuthenticationProvider implements AuthenticationProvider {
             return ids;
         }
 
-        final String clientId = getClientId(clientCert);
-        if (clientId.equals(System.getProperty(ZOOKEEPER_X509AUTHENTICATIONPROVIDER_SUPERUSER))) {
-            ids.add(new Id("super", clientId));
-            LOG.info("Authenticated Id '{}' as super user", clientId);
+        final Collection<String> clientIds;
+        try {
+            clientIds = getClientIds(clientCert);
+        } catch (CertificateException ce) {
+            LOG.error("Failed to extract certificate identities", ce);
+            return ids;
+        }
+        if (clientIds == null || clientIds.isEmpty()
+                || clientIds.stream().anyMatch(id -> id == null || id.isEmpty())) {
+            LOG.warn("Certificate identity provider returned no identities or an invalid identity");
+            return ids;
         }
 
-        final Id id = new Id(getScheme(), clientId);
-        ids.add(id);
-        LOG.info("Authenticated Id '{}' for scheme '{}'", id.getId(), id.getScheme());
+        for (String clientId : new LinkedHashSet<>(clientIds)) {
+            if (clientId.equals(System.getProperty(ZOOKEEPER_X509AUTHENTICATIONPROVIDER_SUPERUSER))) {
+                ids.add(new Id("super", clientId));
+                LOG.info("Authenticated Id '{}' as super user", clientId);
+            }
+
+            final Id id = new Id(getScheme(), clientId);
+            ids.add(id);
+            LOG.info("Authenticated Id '{}' for scheme '{}'", id.getId(), id.getScheme());
+        }
         return Collections.unmodifiableList(ids);
     }
 }
